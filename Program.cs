@@ -1,8 +1,7 @@
-using System.Data.SqlTypes;
 using System.Data.SqlClient;
 using Dapper;
-using Microsoft.AspNetCore.Http.HttpResults;
-using Microsoft.AspNetCore.Mvc;
+using chatgpt4api.Response;
+using System.Net;
 var builder = WebApplication.CreateBuilder(args);
 
 // Add services to the container.
@@ -23,23 +22,64 @@ app.UseHttpsRedirection();
 
 app.MapGet("/meetingroom", () =>
 {
-  using (SqlConnection connection = new SqlConnection("Data Source=(localdb)\\mssqllocaldb;Database=chatgpt;"))
+    using (SqlConnection connection = new SqlConnection("Data Source=(localdb)\\mssqllocaldb;Database=chatgpt;"))
     {
-        var dbResult = connection.Query<MeetingRoomBookingRecord>(@"SELECT * FROM MeetingRoomBookingRecord" ).ToList();
-        if (dbResult.Count == 0)
+        var dbResult = connection.Query<MeetingRoom>(@"SELECT * FROM MeetingRoom").ToList();
+        var response = new ApiResponse<List<MeetingRoom>>()
         {
-            return Results.Ok(new { Message = "All you can book" });
-        }
-        else
-        {
-            return Results.Ok(new { dbResult });
-        }
+            Data = dbResult,
+            Status = HttpStatusCode.OK.ToString(),
+        };
+        return Results.Ok(new { response });
+
     }
 })
 .WithName("GetMeetingRoom")
 .WithOpenApi();
 
+app.MapGet("/meetingroom/free", (string StartDateTime, string EndDateTime, string RoomId) =>
+{
+    ApiResponse response = null;
+    if (DateTime.TryParse(StartDateTime, out DateTime starDate) && DateTime.TryParse(EndDateTime, out DateTime endDate) && !string.IsNullOrEmpty(RoomId))
+    {
+        using (SqlConnection connection = new SqlConnection("Data Source=(localdb)\\mssqllocaldb;Database=chatgpt;"))
+        {
+            var dbResult = connection.Query<MeetingRoomBookingRecord>(@"SELECT * FROM MeetingRoomBookingRecord").ToList();
+            var duplicate = dbResult.Count(x => x.StartDateTime >= starDate && x.EndDateTime <= endDate && x.RoomId == RoomId);
 
+            if (duplicate > 0)
+            {
+                response = new ApiResponse()
+                {
+                    Status = HttpStatusCode.Conflict.ToString(),
+                    Message = "The booking time has already booked"
+                };
+                return Results.Conflict(new { response });
+            }
+            else
+            {
+                response = new ApiResponse()
+                {
+                    Status = HttpStatusCode.OK.ToString(),
+                    Message = "This period can be booked"
+                };
+                return Results.Ok(new { response });
+            }
+        }
+    }
+    else
+    {
+        response = new ApiResponse()
+        {
+            Status = HttpStatusCode.Conflict.ToString(),
+            Message = "The booking time has already booked"
+        };
+        return Results.BadRequest(new { response });
+    }
+
+})
+.WithName("CheckFreeMeetingRoom")
+.WithOpenApi();
 
 app.MapPost("/meetingroom", (Booking booking) =>
 {
